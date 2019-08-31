@@ -28,8 +28,8 @@ fn main() {
     let opt = Kvs::from_args();
 
     match opt {
-        Kvs::Set { key: _, value: _ } => panic!("unimplemented"),
-        Kvs::Get { key: _ } => panic!("unimplemented"),
-        Kvs::Remove { key: _ } => panic!("unimplemented"),
+        Kvs::Set { .. } => panic!("unimplemented"),
+        Kvs::Get { .. } => panic!("unimplemented"),
+        Kvs::Remove { .. } => panic!("unimplemented"),
     }
 }
