@@ -1,22 +1,23 @@
 use std::io;
 
-/// Error type for kvs
-#[derive(Fail, Debug)]
+/// Error type for kvs.
+#[derive(Debug, Fail)]
 pub enum KvsError {
-    /// IO error
+    /// IO error.
     #[fail(display = "{}", _0)]
     Io(#[cause] io::Error),
 
-    /// Serialization or deserialization error
+    /// Serialization or deserialization error.
     #[fail(display = "{}", _0)]
     Ron(#[cause] ron::ser::Error),
 
-    /// Removing non-existent key error
+    /// Removing non-existent key error.
     #[fail(display = "Key not found")]
     KeyNotFound,
 
     /// Unexpected command type error.
-    /// It indicated a corrupted log or a program bug.
+    ///
+    /// This indicates a corrupted log or runtime bug.
     #[fail(display = "Unexpected command type")]
     UnexpectedCommandType,
 }
@@ -33,5 +34,5 @@ impl From<ron::ser::Error> for KvsError {
     }
 }
 
-/// Result type for kvs
+/// Result type for kvs.
 pub type Result<T> = std::result::Result<T, KvsError>;

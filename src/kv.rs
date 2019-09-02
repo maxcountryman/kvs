@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{KvsError, Result};
 
-/// TODO.
+/// A key-value store which is backed by a write-ahead log.
 pub struct KvStore<'a> {
     keydir: HashMap<String, u64>,
     log_file: File,
@@ -20,6 +20,14 @@ impl<'a> KvStore<'a> {
     /// Creates a new key-value store.
     ///
     /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use kvs::KvStore;
+    ///
+    /// let mut store = KvStore::open(Path::new("./")).unwrap();
+    /// store.set(String::from("foo"), String::from("bar"));
+    /// ```
     pub fn open(log_dir: &'a Path) -> Result<Self> {
         if !log_dir.exists() {
             create_dir(log_dir)?;
@@ -65,8 +73,14 @@ impl<'a> KvStore<'a> {
     /// # Examples
     ///
     /// ```
+    /// use std::path::Path;
     /// use kvs::KvStore;
     ///
+    /// let mut store = KvStore::open(Path::new("./")).unwrap();
+    /// store.set(String::from("foo"), String::from("bar")).unwrap();
+    ///
+    /// let value = store.get(String::from("foo")).unwrap();
+    /// assert_eq!(value, Some(String::from("bar")));
     /// ```
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let cmd = to_string(&Command::Set(key.to_owned(), value))?;
@@ -87,13 +101,22 @@ impl<'a> KvStore<'a> {
         Ok(())
     }
 
-    /// Returns the value corresponding to the key.
+    /// Returns the value corresponding to the key. If the key doesn't exist, the returns `None`.
     ///
     /// # Examples
     ///
     /// ```
+    /// use std::path::Path;
     /// use kvs::KvStore;
     ///
+    /// let mut store = KvStore::open(Path::new("./")).unwrap();
+    /// store.set(String::from("foo"), String::from("bar")).unwrap();
+    ///
+    /// let value = store.get(String::from("foo")).unwrap();
+    /// assert_eq!(value, Some(String::from("bar")));
+    ///
+    /// let value = store.get(String::from("baz")).unwrap();
+    /// assert_eq!(value, None);
     /// ```
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
         if let Some(pos) = self.keydir.get(&key) {
@@ -108,7 +131,7 @@ impl<'a> KvStore<'a> {
             if let Command::Set(.., value) = cmd {
                 Ok(Some(value))
             } else {
-                Err(KvsError::KeyNotFound)
+                Err(KvsError::UnexpectedCommandType)
             }
         } else {
             Ok(None)
@@ -117,11 +140,24 @@ impl<'a> KvStore<'a> {
 
     /// Removes a key from the store.
     ///
+    /// # Errors
+    ///
+    /// Trying to remove a nonexistent will result in a [`KvsError::KeyNotFound`] error.
+    /// 
+    /// [`KvsError::KeyNotFound`]: enum.KvsError.html#variant.KeyNotFound
+    ///
     /// # Examples
     ///
     /// ```
+    /// use std::path::Path;
     /// use kvs::KvStore;
     ///
+    /// let mut store = KvStore::open(Path::new("./")).unwrap();
+    /// store.set(String::from("foo"), String::from("bar")).unwrap();
+    /// store.remove(String::from("foo")).unwrap();
+    ///
+    /// let value = store.get(String::from("foo")).unwrap();
+    /// assert_eq!(value, None);
     /// ```
     pub fn remove(&mut self, key: String) -> Result<()> {
         if self.keydir.contains_key(&key) {
@@ -138,6 +174,12 @@ impl<'a> KvStore<'a> {
         }
     }
 
+    /// Compacts write-ahead log.
+    ///
+    /// This is naive compaction. It works by creating a parallel log, reading all the active keys
+    /// in the `keydir`, and then writing those keys to the new log. As this is happening we build
+    /// a new key directory. Once complete, the original log is made to point to this new log and
+    /// the old `keydir` replaced with the new.
     fn compact(&mut self) -> Result<()> {
         let mut log_file = OpenOptions::new()
             .write(true)
@@ -179,7 +221,7 @@ impl<'a> KvStore<'a> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub enum Command {
     Set(String, String),
     Rm(String),
