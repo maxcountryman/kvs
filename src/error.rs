@@ -1,5 +1,8 @@
 use std::io;
 
+/// Result type for kvs.
+pub type Result<T> = std::result::Result<T, KvsError>;
+
 /// Error type for kvs.
 #[derive(Debug, Fail)]
 pub enum KvsError {
@@ -7,9 +10,13 @@ pub enum KvsError {
     #[fail(display = "{}", _0)]
     Io(#[cause] io::Error),
 
-    /// Serialization or deserialization error.
+    /// Converting from bytes to String error.
     #[fail(display = "{}", _0)]
-    Ron(#[cause] ron::ser::Error),
+    FromUtf8(#[cause] std::string::FromUtf8Error),
+
+    /// Slice conversion error.
+    #[fail(display = "{}", _0)]
+    TryFromSlice(#[cause] std::array::TryFromSliceError),
 
     /// Removing non-existent key error.
     #[fail(display = "Key not found")]
@@ -28,11 +35,14 @@ impl From<io::Error> for KvsError {
     }
 }
 
-impl From<ron::ser::Error> for KvsError {
-    fn from(err: ron::ser::Error) -> KvsError {
-        KvsError::Ron(err)
+impl From<std::array::TryFromSliceError> for KvsError {
+    fn from(err: std::array::TryFromSliceError) -> KvsError {
+        KvsError::TryFromSlice(err)
     }
 }
 
-/// Result type for kvs.
-pub type Result<T> = std::result::Result<T, KvsError>;
+impl From<std::string::FromUtf8Error> for KvsError {
+    fn from(err: std::string::FromUtf8Error) -> KvsError {
+        KvsError::FromUtf8(err)
+    }
+}
