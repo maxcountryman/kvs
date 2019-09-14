@@ -1,4 +1,9 @@
+use std::path::Path;
+use std::process::exit;
+
 use structopt::StructOpt;
+
+use kvs::{KvStore, KvsError, Result};
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "kvs", about = "Stores key-value pairs.")]
@@ -24,12 +29,29 @@ enum Kvs {
     },
 }
 
-fn main() {
-    let opt = Kvs::from_args();
+fn main() -> Result<()> {
+    let log = Path::new("./");
+    let mut store = KvStore::open(log)?;
 
-    match opt {
-        Kvs::Set { .. } => panic!("unimplemented"),
-        Kvs::Get { .. } => panic!("unimplemented"),
-        Kvs::Remove { .. } => panic!("unimplemented"),
+    match Kvs::from_args() {
+        Kvs::Set { key, value } => store.set(key, value),
+        Kvs::Get { key } => match store.get(key)? {
+            None => {
+                println!("Key not found");
+                exit(0);
+            }
+            Some(value) => {
+                println!("{}", value);
+                exit(0);
+            }
+        },
+        Kvs::Remove { key } => match store.remove(key) {
+            Err(KvsError::KeyNotFound) => {
+                println!("Key not found");
+                exit(1);
+            }
+            Err(e) => Err(e),
+            Ok(_) => Ok(()),
+        },
     }
 }
