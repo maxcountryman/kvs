@@ -7,7 +7,10 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use crate::entry::{self, Entry};
-use crate::{KvsError, Result};
+use crate::error;
+use crate::KvsError;
+
+use super::KvsEngine;
 
 const COMPACTION_THRESHOLD: u64 = 1024 * 1024;
 
@@ -32,12 +35,12 @@ impl KvStore {
     ///
     /// ```
     /// use std::path::Path;
-    /// use kvs::KvStore;
+    /// use kvs::{KvStore, KvsEngine};
     ///
     /// let mut store = KvStore::open(Path::new("./")).unwrap();
     /// store.set("foo", "bar");
     /// ```
-    pub fn open(log_dir: impl Into<PathBuf>) -> Result<Self> {
+    pub fn open(log_dir: impl Into<PathBuf>) -> error::Result<Self> {
         let mut log_dir = log_dir.into();
         log_dir.push(".kvsdata/");
 
@@ -68,121 +71,8 @@ impl KvStore {
         })
     }
 
-    /// Sets a key-value pair in the store.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::path::Path;
-    /// use kvs::KvStore;
-    ///
-    /// let mut store = KvStore::open(Path::new("./")).unwrap();
-    /// store.set("foo", "bar").unwrap();
-    ///
-    /// let value = store.get("foo").unwrap();
-    /// assert_eq!(value, Some(String::from("bar")));
-    /// ```
-    pub fn set(&mut self, key: impl Into<String>, value: impl Into<String>) -> Result<()> {
-        let key = key.into();
-        let value = value.into();
-
-        let entry = Entry::set(key.clone(), value);
-        let pos = self.writer.pos;
-        entry::to_writer(&mut self.writer, &entry)?;
-        self.writer.flush()?;
-        if let Some(old_entry) = self
-            .keydir
-            .insert(key, (self.current_gen, pos..self.writer.pos).into())
-        {
-            self.uncompacted += old_entry.len;
-        }
-
-        if self.uncompacted > COMPACTION_THRESHOLD {
-            self.compact()?;
-        }
-
-        Ok(())
-    }
-
-    /// Returns the value corresponding to the key. If the key doesn't exist,
-    /// the returns `None`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::path::Path;
-    /// use kvs::KvStore;
-    ///
-    /// let mut store = KvStore::open(Path::new("./")).unwrap();
-    /// store.set("foo", "bar").unwrap();
-    ///
-    /// let value = store.get("foo").unwrap();
-    /// assert_eq!(value, Some(String::from("bar")));
-    ///
-    /// let value = store.get("baz").unwrap();
-    /// assert_eq!(value, None);
-    /// ```
-    pub fn get(&mut self, key: impl Into<String>) -> Result<Option<String>> {
-        let key = key.into();
-        if let Some(entry_pos) = self.keydir.get(&key) {
-            let reader = self
-                .readers
-                .get_mut(&entry_pos.gen)
-                .expect("Cannot find log reader");
-            reader.seek(SeekFrom::Start(entry_pos.pos))?;
-            let mut entry_reader = reader.take(entry_pos.len);
-            let entry = entry::from_reader(&mut entry_reader)?;
-            Ok(entry.value)
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Removes a key from the store.
-    ///
-    /// # Errors
-    ///
-    /// Trying to remove a nonexistent will result in a
-    /// [`KvsError::KeyNotFound`] error.
-    ///
-    /// [`KvsError::KeyNotFound`]: enum.KvsError.html#variant.KeyNotFound
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::path::Path;
-    /// use kvs::KvStore;
-    ///
-    /// let mut store = KvStore::open(Path::new("./")).unwrap();
-    /// store.set("foo", "bar").unwrap();
-    /// store.remove("foo").unwrap();
-    ///
-    /// let value = store.get("foo").unwrap();
-    /// assert_eq!(value, None);
-    /// ```
-    pub fn remove(&mut self, key: impl Into<String>) -> Result<()> {
-        let key = key.into();
-        if self.keydir.contains_key(&key) {
-            let entry = Entry::remove(key);
-            entry::to_writer(&mut self.writer, &entry)?;
-            self.writer.flush()?;
-
-            if let Entry {
-                key, value: None, ..
-            } = entry
-            {
-                let old_entry = self.keydir.remove(&key).expect("Key not found in keydir");
-                self.uncompacted += old_entry.len;
-            }
-
-            Ok(())
-        } else {
-            Err(KvsError::KeyNotFound)
-        }
-    }
-
     /// Compacts write-ahead log.
-    fn compact(&mut self) -> Result<()> {
+    fn compact(&mut self) -> error::Result<()> {
         let compaction_gen = self.current_gen + 1;
         self.current_gen += 2;
 
@@ -224,8 +114,123 @@ impl KvStore {
         Ok(())
     }
 
-    fn new_log_file(&mut self, gen: Generation) -> Result<BufWriterWithPos<File>> {
+    fn new_log_file(&mut self, gen: Generation) -> error::Result<BufWriterWithPos<File>> {
         new_log_file(&self.log_dir, gen, &mut self.readers)
+    }
+}
+
+impl KvsEngine for KvStore {
+    /// Sets a key-value pair in the store.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use kvs::{KvStore, KvsEngine};
+    ///
+    /// let mut store = KvStore::open(Path::new("./")).unwrap();
+    /// store.set("foo", "bar").unwrap();
+    ///
+    /// let value = store.get("foo").unwrap();
+    /// assert_eq!(value, Some(String::from("bar")));
+    /// ```
+    fn set(&mut self, key: impl Into<String>, value: impl Into<String>) -> error::Result<()> {
+        let key = key.into();
+        let value = value.into();
+
+        let entry = Entry::set(key.clone(), value);
+        let pos = self.writer.pos;
+        entry::to_writer(&mut self.writer, &entry)?;
+        self.writer.flush()?;
+        if let Some(old_entry) = self
+            .keydir
+            .insert(key, (self.current_gen, pos..self.writer.pos).into())
+        {
+            self.uncompacted += old_entry.len;
+        }
+
+        if self.uncompacted > COMPACTION_THRESHOLD {
+            self.compact()?;
+        }
+
+        Ok(())
+    }
+
+    /// Returns the value corresponding to the key. If the key doesn't exist,
+    /// the returns `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use kvs::{KvStore, KvsEngine};
+    ///
+    /// let mut store = KvStore::open(Path::new("./")).unwrap();
+    /// store.set("foo", "bar").unwrap();
+    ///
+    /// let value = store.get("foo").unwrap();
+    /// assert_eq!(value, Some(String::from("bar")));
+    ///
+    /// let value = store.get("baz").unwrap();
+    /// assert_eq!(value, None);
+    /// ```
+    fn get(&mut self, key: impl Into<String>) -> error::Result<Option<String>> {
+        let key = key.into();
+        if let Some(entry_pos) = self.keydir.get(&key) {
+            let reader = self
+                .readers
+                .get_mut(&entry_pos.gen)
+                .expect("Cannot find log reader");
+            reader.seek(SeekFrom::Start(entry_pos.pos))?;
+            let mut entry_reader = reader.take(entry_pos.len);
+            let entry = entry::from_reader(&mut entry_reader)?;
+            Ok(entry.value)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Removes a key from the store.
+    ///
+    /// # Errors
+    ///
+    /// Trying to remove a nonexistent will result in a
+    /// [`KvsError::KeyNotFound`] error.
+    ///
+    /// [`KvsError::KeyNotFound`]: enum.KvsError.html#variant.KeyNotFound
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use kvs::{KvStore, KvsEngine};
+    ///
+    /// let mut store = KvStore::open(Path::new("./")).unwrap();
+    /// store.set("foo", "bar").unwrap();
+    /// store.remove("foo").unwrap();
+    ///
+    /// let value = store.get("foo").unwrap();
+    /// assert_eq!(value, None);
+    /// ```
+    fn remove(&mut self, key: impl Into<String>) -> error::Result<()> {
+        let key = key.into();
+        if self.keydir.contains_key(&key) {
+            let entry = Entry::remove(key);
+            entry::to_writer(&mut self.writer, &entry)?;
+            self.writer.flush()?;
+
+            if let Entry {
+                key, value: None, ..
+            } = entry
+            {
+                let old_entry = self.keydir.remove(&key).expect("Key not found in keydir");
+                self.uncompacted += old_entry.len;
+            }
+
+            Ok(())
+        } else {
+            Err(KvsError::KeyNotFound)
+        }
     }
 }
 
@@ -233,7 +238,7 @@ fn new_log_file(
     log_dir: &Path,
     gen: Generation,
     readers: &mut Readers,
-) -> Result<BufWriterWithPos<File>> {
+) -> error::Result<BufWriterWithPos<File>> {
     let path = log_path(&log_dir, gen);
     let writer = BufWriterWithPos::new(
         OpenOptions::new()
@@ -246,9 +251,9 @@ fn new_log_file(
     Ok(writer)
 }
 
-fn sorted_gen_list(log_dir: &Path) -> Result<Vec<u64>> {
+fn sorted_gen_list(log_dir: &Path) -> error::Result<Vec<u64>> {
     let mut gen_list: Vec<u64> = fs::read_dir(&log_dir)?
-        .flat_map(|res| -> Result<_> { Ok(res?.path()) })
+        .flat_map(|res| -> error::Result<_> { Ok(res?.path()) })
         .filter(|path| path.is_file() && path.extension() == Some("log".as_ref()))
         .flat_map(|path| {
             path.file_name()
@@ -262,7 +267,11 @@ fn sorted_gen_list(log_dir: &Path) -> Result<Vec<u64>> {
     Ok(gen_list)
 }
 
-fn load(gen: Generation, reader: &mut BufReaderWithPos<File>, keydir: &mut KeyDir) -> Result<u64> {
+fn load(
+    gen: Generation,
+    reader: &mut BufReaderWithPos<File>,
+    keydir: &mut KeyDir,
+) -> error::Result<u64> {
     let mut pos = reader.seek(SeekFrom::Start(0))?;
     let mut new_pos = pos;
     let mut uncompacted = 0;
@@ -276,7 +285,9 @@ fn load(gen: Generation, reader: &mut BufReaderWithPos<File>, keydir: &mut KeyDi
         new_pos += entry::PREFIX_SIZE as u64;
 
         let key_size = u64::from(u32::from_ne_bytes(prefix_bytes[4..8].try_into()?));
-        let value_size = u64::from(u32::from_ne_bytes(prefix_bytes[8..entry::PREFIX_SIZE].try_into()?));
+        let value_size = u64::from(u32::from_ne_bytes(
+            prefix_bytes[8..entry::PREFIX_SIZE].try_into()?,
+        ));
 
         reader.seek(SeekFrom::Start(pos))?;
         let mut entry_reader = reader.take(entry::PREFIX_SIZE as u64 + key_size + value_size);
@@ -338,7 +349,7 @@ struct BufReaderWithPos<R: Read + Seek> {
 }
 
 impl<R: Read + Seek> BufReaderWithPos<R> {
-    fn new(mut inner: R) -> Result<Self> {
+    fn new(mut inner: R) -> error::Result<Self> {
         let pos = inner.seek(SeekFrom::Current(0))?;
         Ok(BufReaderWithPos {
             reader: BufReader::new(inner),
@@ -369,7 +380,7 @@ struct BufWriterWithPos<W: Write + Seek> {
 }
 
 impl<W: Write + Seek> BufWriterWithPos<W> {
-    fn new(mut inner: W) -> Result<Self> {
+    fn new(mut inner: W) -> error::Result<Self> {
         let pos = inner.seek(SeekFrom::Current(0))?;
         Ok(BufWriterWithPos {
             writer: BufWriter::new(inner),

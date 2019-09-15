@@ -26,7 +26,15 @@ pub enum KvsError {
     ///
     /// This indicates a corrupted log or runtime bug.
     #[fail(display = "Unexpected command type")]
-    UnexpectedCommandType,
+    Unexpectedcommandtype,
+
+    /// Sled error
+    #[fail(display = "Sled error: {}", _0)]
+    Sled(#[cause] sled::Error),
+
+    /// Error with a string message
+    #[fail(display = "{}", _0)]
+    String(String),
 }
 
 impl From<io::Error> for KvsError {
@@ -44,5 +52,11 @@ impl From<std::array::TryFromSliceError> for KvsError {
 impl From<std::string::FromUtf8Error> for KvsError {
     fn from(err: std::string::FromUtf8Error) -> KvsError {
         KvsError::FromUtf8(err)
+    }
+}
+
+impl From<sled::Error> for KvsError {
+    fn from(err: sled::Error) -> KvsError {
+        KvsError::Sled(err)
     }
 }

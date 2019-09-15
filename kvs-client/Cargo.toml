@@ -1,0 +1,8 @@
+[package]
+name = "kvs-client"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+kvs = { path = "../kvs" }
+structopt = "0.3.1"
