@@ -5,6 +5,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use crate::entry::{self, Entry};
 use crate::error;
@@ -19,7 +20,11 @@ type Readers = HashMap<Generation, BufReaderWithPos<File>>;
 type KeyDir = BTreeMap<String, EntryPos>;
 
 /// A key-value store which is backed by write-ahead logging.
-pub struct KvStore {
+#[derive(Clone)]
+pub struct KvStore(Arc<Mutex<SharedKvStore>>);
+
+/// A thread-sharable handle into a key-value store.
+pub struct SharedKvStore {
     log_dir: PathBuf,
     readers: Readers,
     writer: BufWriterWithPos<File>,
@@ -61,28 +66,29 @@ impl KvStore {
         let current_gen = gen_list.last().unwrap_or(&0) + 1;
         let writer = new_log_file(&log_dir, current_gen, &mut readers)?;
 
-        Ok(Self {
+        Ok(Self(Arc::new(Mutex::new(SharedKvStore {
             log_dir,
             readers,
             writer,
             keydir,
             current_gen,
             uncompacted,
-        })
+        }))))
     }
 
     /// Compacts write-ahead log.
-    fn compact(&mut self) -> error::Result<()> {
-        let compaction_gen = self.current_gen + 1;
-        self.current_gen += 2;
+    fn compact(&self) -> error::Result<()> {
+        let shared = &mut *self.0.lock().unwrap();
+        let compaction_gen = shared.current_gen + 1;
+        shared.current_gen += 2;
 
-        self.writer = self.new_log_file(self.current_gen)?;
+        shared.writer = self.new_log_file(shared.current_gen)?;
 
         let mut compaction_writer = self.new_log_file(compaction_gen)?;
 
         let mut new_pos = 0;
-        for entry_pos in self.keydir.values_mut() {
-            let reader = self
+        for entry_pos in shared.keydir.values_mut() {
+            let reader = shared
                 .readers
                 .get_mut(&entry_pos.gen)
                 .expect("Cannot find log reader");
@@ -97,7 +103,7 @@ impl KvStore {
         }
         compaction_writer.flush()?;
 
-        let stale_gens: Vec<_> = self
+        let stale_gens: Vec<_> = shared
             .readers
             .keys()
             .filter(|&&gen| gen < compaction_gen)
@@ -105,17 +111,18 @@ impl KvStore {
             .collect();
 
         for stale_gen in stale_gens {
-            self.readers.remove(&stale_gen);
-            fs::remove_file(log_path(&self.log_dir, stale_gen))?;
+            shared.readers.remove(&stale_gen);
+            fs::remove_file(log_path(&shared.log_dir, stale_gen))?;
         }
 
-        self.uncompacted = 0;
+        shared.uncompacted = 0;
 
         Ok(())
     }
 
-    fn new_log_file(&mut self, gen: Generation) -> error::Result<BufWriterWithPos<File>> {
-        new_log_file(&self.log_dir, gen, &mut self.readers)
+    fn new_log_file(&self, gen: Generation) -> error::Result<BufWriterWithPos<File>> {
+        let shared = &mut *self.0.lock().unwrap();
+        new_log_file(&shared.log_dir, gen, &mut shared.readers)
     }
 }
 
@@ -134,22 +141,24 @@ impl KvsEngine for KvStore {
     /// let value = store.get("foo").unwrap();
     /// assert_eq!(value, Some(String::from("bar")));
     /// ```
-    fn set(&mut self, key: impl Into<String>, value: impl Into<String>) -> error::Result<()> {
+    fn set(&self, key: impl Into<String>, value: impl Into<String>) -> error::Result<()> {
         let key = key.into();
         let value = value.into();
 
+        let shared = &mut *self.0.lock().unwrap();
+
         let entry = Entry::set(key.clone(), value);
-        let pos = self.writer.pos;
-        entry::to_writer(&mut self.writer, &entry)?;
-        self.writer.flush()?;
-        if let Some(old_entry) = self
+        let pos = shared.writer.pos;
+        entry::to_writer(&mut shared.writer, &entry)?;
+        shared.writer.flush()?;
+        if let Some(old_entry) = shared
             .keydir
-            .insert(key, (self.current_gen, pos..self.writer.pos).into())
+            .insert(key, (shared.current_gen, pos..shared.writer.pos).into())
         {
-            self.uncompacted += old_entry.len;
+            shared.uncompacted += old_entry.len;
         }
 
-        if self.uncompacted > COMPACTION_THRESHOLD {
+        if shared.uncompacted > COMPACTION_THRESHOLD {
             self.compact()?;
         }
 
@@ -174,10 +183,11 @@ impl KvsEngine for KvStore {
     /// let value = store.get("baz").unwrap();
     /// assert_eq!(value, None);
     /// ```
-    fn get(&mut self, key: impl Into<String>) -> error::Result<Option<String>> {
+    fn get(&self, key: impl Into<String>) -> error::Result<Option<String>> {
         let key = key.into();
-        if let Some(entry_pos) = self.keydir.get(&key) {
-            let reader = self
+        let shared = &mut *self.0.lock().unwrap();
+        if let Some(entry_pos) = shared.keydir.get(&key) {
+            let reader = shared
                 .readers
                 .get_mut(&entry_pos.gen)
                 .expect("Cannot find log reader");
@@ -212,19 +222,20 @@ impl KvsEngine for KvStore {
     /// let value = store.get("foo").unwrap();
     /// assert_eq!(value, None);
     /// ```
-    fn remove(&mut self, key: impl Into<String>) -> error::Result<()> {
+    fn remove(&self, key: impl Into<String>) -> error::Result<()> {
         let key = key.into();
-        if self.keydir.contains_key(&key) {
+        let shared = &mut *self.0.lock().unwrap();
+        if shared.keydir.contains_key(&key) {
             let entry = Entry::remove(key);
-            entry::to_writer(&mut self.writer, &entry)?;
-            self.writer.flush()?;
+            entry::to_writer(&mut shared.writer, &entry)?;
+            shared.writer.flush()?;
 
             if let Entry {
                 key, value: None, ..
             } = entry
             {
-                let old_entry = self.keydir.remove(&key).expect("Key not found in keydir");
-                self.uncompacted += old_entry.len;
+                let old_entry = shared.keydir.remove(&key).expect("Key not found in keydir");
+                shared.uncompacted += old_entry.len;
             }
 
             Ok(())

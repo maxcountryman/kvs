@@ -11,6 +11,10 @@ failure_derive = "0.1.5"
 crc32fast = "1.2.0"
 log = "0.4.8"
 sled = "0.22.0"
+crossbeam = "0.7.2"
+crossbeam-skiplist = { version = "0.0.0", git = "https://github.com/crossbeam-rs/crossbeam.git", rev = "8cc906b" }
+rayon = "1.2.0"
+num_cpus = "1.10.1"
 
 [dev-dependencies]
 assert_cmd = "0.11"
@@ -20,6 +24,8 @@ rand = "0.7.2"
 tempfile = "3.0.7"
 walkdir = "2.2.7"
 rand_core = "0.5.1"
+crossbeam-utils = "0.6.6"
+panic-control = "0.1.4"
 
 [features]
 default = ["rand/small_rng"]

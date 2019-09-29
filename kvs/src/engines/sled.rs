@@ -17,7 +17,7 @@ impl SledKvsEngine {
 }
 
 impl KvsEngine for SledKvsEngine {
-    fn set(&mut self, key: impl Into<String>, value: impl Into<String>) -> error::Result<()> {
+    fn set(&self, key: impl Into<String>, value: impl Into<String>) -> error::Result<()> {
         let tree: &Tree = &self.0;
         tree.set(key.into(), value.into().into_bytes())
             .map(|_| ())?;
@@ -25,7 +25,7 @@ impl KvsEngine for SledKvsEngine {
         Ok(())
     }
 
-    fn get(&mut self, key: impl Into<String>) -> error::Result<Option<String>> {
+    fn get(&self, key: impl Into<String>) -> error::Result<Option<String>> {
         let tree: &Tree = &self.0;
         Ok(tree
             .get(key.into())?
@@ -34,7 +34,7 @@ impl KvsEngine for SledKvsEngine {
             .transpose()?)
     }
 
-    fn remove(&mut self, key: impl Into<String>) -> error::Result<()> {
+    fn remove(&self, key: impl Into<String>) -> error::Result<()> {
         let tree: &Tree = &self.0;
         tree.del(key.into())?.ok_or(KvsError::KeyNotFound)?;
         tree.flush()?;

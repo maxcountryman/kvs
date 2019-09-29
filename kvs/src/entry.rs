@@ -15,7 +15,7 @@ type Value = Option<String>;
 /// Entries hold onto a CRC32 of their contents. This is important because
 /// during deserialization we must check for data corruption. To do so, we
 /// first read the CRC prefix and later use this to verify the read data.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Entry {
     /// The key of the entry.
     pub key: String,

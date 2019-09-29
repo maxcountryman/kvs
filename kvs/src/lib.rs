@@ -20,5 +20,8 @@ mod request;
 mod response;
 mod server;
 
+/// Thread pool module.
+pub mod thread_pool;
+
 /// Error module.
 pub mod error;
