@@ -5,6 +5,7 @@ use crc32fast::Hasher;
 
 use crate::Result;
 
+/// The size of the entry's prefix in bytes.
 pub const PREFIX_SIZE: usize = 12;
 
 type Value = Option<String>;
@@ -64,12 +65,7 @@ impl Entry {
 
     /// Returns a byte buffer of the entry's properties, without the CRC32.
     fn as_bytes(&self) -> Vec<u8> {
-        as_bytes(
-            self.key_size,
-            self.value_size,
-            &self.key,
-            &self.value,
-        )
+        as_bytes(self.key_size, self.value_size, &self.key, &self.value)
     }
 
     fn new(key: String, value: Value) -> Self {
@@ -120,8 +116,7 @@ pub fn to_writer<W>(writer: &mut W, entry: &Entry) -> Result<()>
 where
     W: Write + Seek,
 {
-    let bytes = entry.as_durable_bytes();
-    writer.write_all(&bytes)?;
+    writer.write_all(&entry.as_durable_bytes())?;
     Ok(())
 }
 
@@ -132,7 +127,7 @@ pub fn from_reader(reader: &mut dyn Read) -> Result<Entry> {
 
     let crc32 = u32::from_be_bytes(prefix_bytes[..4].try_into()?);
     let key_size = u32::from_ne_bytes(prefix_bytes[4..8].try_into()?);
-    let value_size = u32::from_ne_bytes(prefix_bytes[8..12].try_into()?);
+    let value_size = u32::from_ne_bytes(prefix_bytes[8..PREFIX_SIZE].try_into()?);
 
     let mut bytes: Vec<u8> = vec![0; (key_size + value_size) as usize];
     reader.read_exact(&mut bytes)?;
