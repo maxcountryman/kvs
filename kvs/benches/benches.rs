@@ -2,8 +2,8 @@
 extern crate criterion;
 
 use criterion::{BatchSize, Criterion};
-use rand::Rng;
 use rand::rngs::SmallRng;
+use rand::Rng;
 use rand_core::SeedableRng;
 use sled;
 use tempfile::TempDir;
@@ -11,76 +11,62 @@ use tempfile::TempDir;
 use kvs::{KvStore, KvsEngine, SledKvsEngine};
 
 fn bench_set(c: &mut Criterion) {
-    let mut group = c.benchmark_group("KvsEngine::set");
+    let mut group = c.benchmark_group("Set");
 
-    group.bench_function("kvs", |b| {
-        b.iter_batched(
-            || {
-                let temp_dir = TempDir::new().unwrap();
-                KvStore::open(temp_dir.path()).unwrap()
-            },
-            |mut db| {
-                for i in 1..(1 << 12) {
-                    db.set(format!("key{}", i), "value").unwrap();
-                }
-            },
-            BatchSize::SmallInput,
-        );
+    group.bench_function("kvs.set", |b| {
+        let temp_dir = TempDir::new().unwrap();
+        let mut db = KvStore::open(temp_dir.path()).unwrap();
+        b.iter(|| {
+            for key_i in 1..(1 << 8) {
+                db.set(format!("key{}", key_i), "value").unwrap();
+            }
+        });
     });
 
-    group.bench_function("sled", |b| {
-        b.iter_batched(
-            || {
-                let temp_dir = TempDir::new().unwrap();
-                SledKvsEngine::new(sled::Db::start_default(&temp_dir).unwrap())
-            },
-            |mut db| {
-                for i in 1..(1 << 12) {
-                    db.set(format!("key{}", i), "value").unwrap();
-                }
-            },
-            BatchSize::SmallInput,
-        );
+    group.bench_function("sled.set", |b| {
+        let temp_dir = TempDir::new().unwrap();
+        let mut db = SledKvsEngine::new(sled::Db::start_default(&temp_dir).unwrap());
+        b.iter(|| {
+            for key_i in 1..(1 << 8) {
+                db.set(format!("key{}", key_i), "value").unwrap();
+            }
+        });
     });
 
     group.finish();
 }
 
 fn bench_get(c: &mut Criterion) {
-    let mut group = c.benchmark_group("KvsEngine::get");
+    let mut group = c.benchmark_group("Get");
 
-    group.bench_function("kvs", |b| {
-        for i in [8, 12, 16, 20].iter() {
-            let temp_dir = TempDir::new().unwrap();
-            let mut store = KvStore::open(temp_dir.path()).unwrap();
+    group.bench_function("kvs.get", |b| {
+        let temp_dir = TempDir::new().unwrap();
+        let mut store = KvStore::open(temp_dir.path()).unwrap();
 
-            for key_i in 1..(1 << i) {
-                store.set(format!("key{}", key_i), "value").unwrap();
-            }
-
-            let mut rng = SmallRng::from_seed([0; 16]);
-            b.iter(|| {
-                store
-                    .get(format!("key{}", rng.gen_range(1, 1 << i)))
-                    .unwrap();
-            })
+        for key_i in 1..(1 << 8) {
+            store.set(format!("key{}", key_i), "value").unwrap();
         }
+
+        let mut rng = SmallRng::from_seed([0; 16]);
+        b.iter(|| {
+            store
+                .get(format!("key{}", rng.gen_range(1, 1 << 8)))
+                .unwrap();
+        })
     });
 
-    group.bench_function("sled", |b| {
-        for i in [8, 12, 16, 20].iter() {
-            let temp_dir = TempDir::new().unwrap();
-            let mut db = SledKvsEngine::new(sled::Db::start_default(&temp_dir).unwrap());
+    group.bench_function("sled.get", |b| {
+        let temp_dir = TempDir::new().unwrap();
+        let mut db = SledKvsEngine::new(sled::Db::start_default(&temp_dir).unwrap());
 
-            for key_i in 1..(1 << i) {
-                db.set(format!("key{}", key_i), "value").unwrap();
-            }
-
-            let mut rng = SmallRng::from_seed([0; 16]);
-            b.iter(|| {
-                db.get(format!("key{}", rng.gen_range(1, 1 << i))).unwrap();
-            })
+        for key_i in 1..(1 << 8) {
+            db.set(format!("key{}", key_i), "value").unwrap();
         }
+
+        let mut rng = SmallRng::from_seed([0; 16]);
+        b.iter(|| {
+            db.get(format!("key{}", rng.gen_range(1, 1 << 8))).unwrap();
+        })
     });
 
     group.finish();
